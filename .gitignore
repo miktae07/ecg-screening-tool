@@ -1,0 +1,6 @@
+.venv/
+.claude/
+.agents/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml

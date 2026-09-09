@@ -1,0 +1,8 @@
+sierraecg>=0.4.0
+neurokit2>=0.2.9
+streamlit>=1.60
+plotly>=5.20
+pymupdf>=1.24
+numpy>=1.24
+scipy>=1.10
+defusedxml>=0.7
