@@ -11,6 +11,7 @@ import warnings
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
@@ -41,7 +42,7 @@ def fmt(v, unit="", nd=0):
 def render_disclaimer():
     st.markdown(
         """
-> ⚠️ **CHỈ DÙNG ĐỂ DEMO / SÀNG LỌC BƯỚC ĐẦU.**
+> **CHỈ DÙNG ĐỂ DEMO / SÀNG LỌC BƯỚC ĐẦU.**
 > Đây KHÔNG phải thiết bị chẩn đoán y tế, chưa qua kiểm định lâm sàng.
 > Công cụ được thiết kế thiên về **báo động dư (thà nhầm còn hơn bỏ sót)** -
 > mọi cờ cảnh báo đều cần **bác sĩ xem lại dạng sóng gốc** trước khi kết luận.
@@ -51,38 +52,46 @@ def render_disclaimer():
 
 
 def render_metadata(rec):
-    cols = st.columns(5)
-    cols[0].metric("Bệnh viện", rec.facility_name or "—")
-    cols[1].metric("Khoa/Viện", rec.department_name or "—")
-    cols[2].metric("Giới tính", rec.patient_sex or "—")
-    cols[3].metric("Tuổi", rec.patient_age or "—")
-    cols[4].metric("Thời gian ghi", rec.acquisition_datetime or "—")
+    st.table(
+        {
+            "Bệnh viện": rec.facility_name or "—",
+            "Khoa/Viện": rec.department_name or "—",
+            "Giới tính": rec.patient_sex or "—",
+            "Tuổi": rec.patient_age or "—",
+            "Thời gian ghi": rec.acquisition_datetime or "—",
+        },
+        border="horizontal",
+    )
 
     quality = rec.signal_quality
     if quality == "digital_native":
-        st.success("Nguồn dữ liệu: **tín hiệu số gốc (XML)** - độ tin cậy cao, đủ 12 chuyển đạo đồng bộ thời gian.")
+        st.caption("Nguồn dữ liệu: tín hiệu số gốc (XML) - độ tin cậy cao, đủ 12 chuyển đạo đồng bộ thời gian.")
     else:
-        st.warning(
+        st.caption(
             "Nguồn dữ liệu: **số hoá lại từ nét vẽ PDF** - độ tin cậy THẤP HƠN file XML "
             "(xem phần 'Độ tin cậy' trong tài liệu kỹ thuật). Nên dùng file XML nếu có."
         )
     for w in rec.warnings:
-        st.info(f"ℹ️ {w}")
+        st.caption(w)
 
 
 def render_summary(rep):
     n_high = sum(1 for f in rep.flags if f.level == "nguy_co_cao")
     n_warn = sum(1 for f in rep.flags if f.level == "canh_bao")
     if n_high:
-        st.error(f"🔴 {rep.summary_text}")
+        st.error(rep.summary_text)
     elif n_warn:
-        st.warning(f"🟠 {rep.summary_text}")
+        st.warning(rep.summary_text)
     else:
-        st.success(f"🟢 {rep.summary_text}")
+        st.success(rep.summary_text)
 
     if rep.record.device_severity:
-        st.caption(f"Kết luận sẵn có từ máy ghi ECG (để đối chiếu, KHÔNG do công cụ này tính): "
-                   f"**{rep.record.device_severity}**")
+        st.markdown(f"Kết luận sẵn có từ máy ghi ECG (để đối chiếu, KHÔNG do công cụ này tính): "
+                    f"**{rep.record.device_severity}**")
+    if rep.record.device_interpretation:
+        with st.expander("Diễn giải chi tiết của máy ghi ECG (nguyên văn, để đối chiếu)"):
+            for line in rep.record.device_interpretation:
+                st.write(f"- {line}")
 
 
 def render_measurements(rep):
@@ -108,6 +117,30 @@ def render_measurements(rep):
         "Thông số 'Máy ghi ECG báo cáo' được trích trực tiếp từ file gốc (không phải do công cụ "
         "này tính) - dùng để đối chiếu nhanh. Một số thông số (PR, QT, trục điện tim) hiện công cụ "
         "chưa tự tính mà chỉ hiển thị lại số liệu của máy."
+    )
+
+
+def render_lead_measurements(rep):
+    leads = [l for l in STANDARD_LEAD_ORDER if l in rep.peak_to_peak_mV]
+    leads += [l for l in rep.peak_to_peak_mV if l not in leads]
+    df = pd.DataFrame(
+        {
+            "Chuyển đạo": leads,
+            "Biên độ đỉnh-đỉnh (mV)": [rep.peak_to_peak_mV.get(l) for l in leads],
+            "Lệch ST tại J+60ms (mV)": [rep.st_deviation_mV.get(l) for l in leads],
+        }
+    )
+    st.dataframe(
+        df,
+        column_config={
+            "Biên độ đỉnh-đỉnh (mV)": st.column_config.NumberColumn(format="%.2f"),
+            "Lệch ST tại J+60ms (mV)": st.column_config.NumberColumn(format="%+.2f"),
+        },
+        hide_index=True,
+    )
+    st.caption(
+        "Điện thế thấp: biên độ đỉnh-đỉnh cao nhất ở các chuyển đạo chi < 0.5 mV. "
+        "Nghi thay đổi ST: |lệch ST| >= 0.10 mV (xem chi tiết ở phần cờ sàng lọc bên trên)."
     )
 
 
@@ -189,6 +222,34 @@ def render_waveforms(rec, rep):
             st.plotly_chart(fig, width='stretch')
 
 
+REFERENCE_RANGES = [
+    ("**Nhịp tim (HR)**", "60–100 lần/phút", "Tần số tim"),
+    ("**Sóng P**", "< 120 ms", "Khử cực tâm nhĩ"),
+    ("**Biên độ P**", "thường < 2,5 mm ở DII", "Đánh giá hoạt động tâm nhĩ"),
+    ("**Khoảng PR**", "120–200 ms", "Dẫn truyền từ nhĩ xuống thất"),
+    ("**Phức bộ QRS**", "thường 70–110 ms, < 120 ms", "Khử cực tâm thất"),
+    ("**Khoảng QT**", "thay đổi theo nhịp tim", "Khử cực + tái cực tâm thất"),
+    ("**QTc**", "thường < 450 ms ở nam, < 460 ms ở nữ", "QT đã hiệu chỉnh theo nhịp tim"),
+    ("**Đoạn ST**", "gần đường đẳng điện", "Quan trọng trong đánh giá thiếu máu cơ tim"),
+    ("**Sóng T**", "thường cùng chiều với QRS ở nhiều chuyển đạo", "Tái cực tâm thất"),
+    ("**Khoảng RR**", "phụ thuộc nhịp tim", "Khoảng giữa hai nhịp tim liên tiếp"),
+    ("**Trục điện tim QRS**", "khoảng −30° đến +90°", "Hướng khử cực trung bình của tâm thất"),
+]
+
+
+def render_reference_ranges():
+    with st.expander("Bảng giá trị bình thường tham khảo (ECG chuẩn)"):
+        st.table(
+            {
+                "Thông số": [r[0] for r in REFERENCE_RANGES],
+                "Giá trị bình thường tham khảo": [r[1] for r in REFERENCE_RANGES],
+                "Ý nghĩa": [r[2] for r in REFERENCE_RANGES],
+            }
+        )
+        st.caption("Bảng tham khảo chung, không thay thế ngưỡng cảnh báo cụ thể dùng trong công cụ "
+                   "(xem phần 'Các cờ sàng lọc' của từng bản ghi).")
+
+
 def process_file(uploaded_file):
     suffix = Path(uploaded_file.name).suffix.lower()
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -205,7 +266,7 @@ def check_password() -> bool:
     if st.session_state.get("authenticated"):
         return True
 
-    st.title("🫀 Sàng lọc ECG - Đăng nhập")
+    st.title("Sàng lọc ECG - đăng nhập", icon=":material/lock:")
     password = st.text_input("Mật khẩu truy cập", type="password")
     if st.button("Đăng nhập") or password:
         expected = st.secrets.get("app_password")
@@ -224,9 +285,10 @@ def main():
     if not check_password():
         return
 
-    st.title("🫀 Công cụ đọc & sàng lọc nhanh điện tâm đồ (PDF / XML)")
+    st.title("Công cụ đọc & sàng lọc nhanh điện tâm đồ (PDF / XML)", icon=":material/monitor_heart:")
     st.caption("Bản demo kỹ thuật - BV Bạch Mai · Viện Tim mạch")
     render_disclaimer()
+    render_reference_ranges()
 
     uploaded_files = st.file_uploader(
         "Tải lên file ECG (.xml hoặc .pdf) - có thể chọn nhiều file cùng lúc",
@@ -259,6 +321,9 @@ def main():
             with col_b:
                 st.subheader("Thông số đo được")
                 render_measurements(rep)
+            st.divider()
+            st.subheader("Thông số cơ bản theo từng chuyển đạo")
+            render_lead_measurements(rep)
             st.divider()
             render_waveforms(rec, rep)
 

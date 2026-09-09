@@ -162,7 +162,7 @@ def classify_st_deviation(st_deviation_mV: Dict[str, float]) -> List[Flag]:
 
 def summarize(all_flags: List[Flag]) -> str:
     if not all_flags:
-        return "Không phát hiện bất thường theo các quy tắc sàng lọc hiện có (không đồng nghĩa ECG bình thường - vẫn cần bác sĩ đọc)."
+        return "Không phát hiện bất thường theo bộ quy tắc sàng lọc - vẫn cần bác sĩ đọc để kết luận."
     n_high = sum(1 for f in all_flags if f.level == "nguy_co_cao")
     n_warn = sum(1 for f in all_flags if f.level == "canh_bao")
     parts = []
